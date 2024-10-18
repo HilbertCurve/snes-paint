@@ -6,7 +6,7 @@ mod paint;
 
 #[derive(Debug)]
 pub enum Error {
-
+    InvalidCanvasSize(usize, usize),
 }
 
 impl Display for Error {

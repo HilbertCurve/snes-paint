@@ -1,6 +1,9 @@
-use eframe::egui::{Color32, Key, PointerButton, Rect, Response, Stroke, Ui, Widget};
+use std::num::ParseIntError;
+use std::ops::Index;
+use eframe::egui::{Color32, Key, PointerButton, Rect, Response, Rounding, Stroke, Ui, Vec2, Widget};
 use eframe::emath::Pos2;
 use eframe::epaint::RectShape;
+use crate::Error;
 
 pub(crate) enum Palette {
     OneChannel([Color32;2]),
@@ -29,6 +32,15 @@ impl Palette {
         }
     }
 
+    pub fn get_color_mut(&mut self, idx: usize) -> &mut Color32 {
+        match self {
+            &mut Palette::OneChannel(ref mut c) => &mut c[idx],
+            &mut Palette::TwoChannel(ref mut c) => &mut c[idx],
+            &mut Palette::ThreeChannel(ref mut c) => &mut c[idx],
+            &mut Palette::FourChannel(ref mut c) => &mut c[idx],
+        }
+    }
+
     pub(crate) fn set_color(&mut self, idx: usize, color: Color32) {
         match self {
             &mut Palette::OneChannel(ref mut c) => c[idx] = color,
@@ -38,7 +50,7 @@ impl Palette {
         }
     }
 
-    pub fn get_count(&self) -> usize {
+    pub fn size(&self) -> usize {
         match &self {
             Palette::OneChannel(_) => 2,
             Palette::TwoChannel(_) => 4,
@@ -48,71 +60,159 @@ impl Palette {
     }
 }
 
-pub(crate) enum CanvasGrid {
-    Grid8x8([[usize;8];8]),
-    Grid16x16([[usize;16];16]),
-    Grid32x32([[usize;32];32]),
-    Grid64x64([[usize;64];64]),
+pub(crate) struct CanvasGrid<const W: usize, const H: usize> {
+    grid: [[usize;W];H]
 }
 
-impl CanvasGrid {
+impl<const W: usize, const H: usize> CanvasGrid<W, H> {
     pub fn set_pixel(&mut self, row: usize, col: usize, idx: usize) {
-        if row > self.size() || col > self.size() {
-            panic!("Pixel set out of bounds! ({1}, {2}) out of bounds for {0}x{0} grid.",
-                   self.size(), row, col);
+        if row > W || col > H {
+            panic!("Pixel set out of bounds! ({row}, {col}) out of bounds for {W}x{H} grid.");
         }
 
-        match self {
-            &mut CanvasGrid::Grid8x8(ref mut grid) => { grid[row][col] = idx; }
-            &mut CanvasGrid::Grid16x16(ref mut grid) => { grid[row][col] = idx; }
-            &mut CanvasGrid::Grid32x32(ref mut grid) => { grid[row][col] = idx; }
-            &mut CanvasGrid::Grid64x64(ref mut grid) => { grid[row][col] = idx; }
-        }
+        self.grid[row][col] = idx;
     }
 
-    pub fn size(&self) -> usize {
-        match &self {
-            CanvasGrid::Grid8x8 { .. } => { 8 }
-            CanvasGrid::Grid16x16 { .. } => { 16 }
-            CanvasGrid::Grid32x32 { .. } => { 32 }
-            CanvasGrid::Grid64x64 { .. } => { 64 }
+    #[inline]
+    pub const fn width(&self) -> usize { W }
+    #[inline]
+    pub const fn height(&self) -> usize { H }
+}
+
+/// A trait for being a two-dimensional grid of elements.
+trait Grid<T: Clone> {
+    fn get(&self, row: usize, col: usize) -> T;
+    fn set(&mut self, row: usize, col: usize, v: T);
+    fn width(&self) -> usize;
+    fn height(&self) -> usize;
+}
+
+macro_rules! impl_grid_on_canvas {
+    ($w:expr, $h:expr) => {
+        impl Grid<usize> for CanvasGrid<$w, $h> {
+            fn get(&self, row: usize, col: usize) -> usize {
+                self.grid[row][col]
+            }
+            fn set(&mut self, row: usize, col: usize, v: usize) {
+                self.grid[row][col] = v;
+            }
+            fn width(&self) -> usize {
+                $w
+            }
+            fn height(&self) -> usize {
+                $h
+            }
         }
+    };
+}
+
+impl_grid_on_canvas!(8, 8);
+impl_grid_on_canvas!(16, 16);
+impl_grid_on_canvas!(32, 32);
+impl_grid_on_canvas!(64, 64);
+
+impl<const W: usize, const H: usize> Index<usize> for CanvasGrid<W, H> {
+    type Output = [usize];
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.grid[index]
     }
 }
 
-impl Default for CanvasGrid {
+impl<const W: usize, const H: usize> Default for CanvasGrid<W, H> {
     fn default() -> Self {
-        Self::Grid8x8([[0;8];8])
+        CanvasGrid {
+            grid: [[0usize;W];H]
+        }
     }
 }
 
 
 pub(crate) struct Canvas {
     pub(crate) palette: Palette,
-    grid: CanvasGrid,
+    grid: Box<dyn Grid<usize>>,
     pos: Pos2,
     pixel_width: u32,
-    curr_idx: usize,
+    pub(crate) curr_idx: usize,
 }
 
 impl Canvas {
     pub fn new() -> Canvas {
         Canvas {
             palette: Palette::default(),
-            grid: CanvasGrid::default(),
+            grid: Box::new(CanvasGrid::<8, 8>::default()),
             pos: Pos2::new(0.0, 0.0),
             pixel_width: 20,
             curr_idx: 0,
         }
     }
 
-    pub fn set_pos(&mut self, pos: Pos2) {
+    pub(crate) fn set_size(&mut self, width: usize, height: usize) -> Result<(), Error> {
+        if width == self.grid.width() && height == self.grid.height() {
+            return Ok(());
+        }
+
+        let copy_width = Ord::min(self.grid.width(), width);
+        let copy_height = Ord::min(self.grid.height(), height);
+        match (width, height) {
+            (8, 8) => {
+                let mut grid = [[0usize;8];8];
+
+                for i in 0..copy_width {
+                    for j in 0..copy_height {
+                        grid[i][j] = self.grid.get(i, j);
+                    }
+                }
+
+
+                self.grid = Box::new(CanvasGrid::<8, 8> { grid });
+
+                Ok(())
+            }
+            (16, 16) => {
+                let mut grid = [[0usize;16];16];
+
+                for i in 0..copy_width {
+                    for j in 0..copy_height {
+                        grid[i][j] = self.grid.get(i, j);
+                    }
+                }
+
+                self.grid = Box::new(CanvasGrid::<16, 16> { grid });
+
+                Ok(())
+            }
+            (32, 32) => {
+                unimplemented!()
+            }
+            (64, 64) => {
+                unimplemented!()
+            }
+            _ => {
+                Err(Error::InvalidCanvasSize(width, height))
+            }
+        }
+    }
+
+    pub(crate) fn set_pos(&mut self, pos: Pos2) {
         self.pos = pos;
     }
 
+    pub fn palette_pos(&self) -> Vec2 {
+        Vec2 {
+            x: self.pos.x + self.grid.width() as f32 * self.pixel_width as f32,
+            y: self.pos.y,
+        }
+    }
+
+    pub(crate) fn get_palette_mut(&mut self) -> &mut Palette {
+        &mut self.palette
+    }
+
     pub fn render(&self, ui: &mut Ui) {
-        for i in 0..self.grid.size() {
-            for j in 0..self.grid.size() {
+        // render grid
+        for i in 0..self.grid.width() {
+            for j in 0..self.grid.height() {
                 ui.painter().add(RectShape {
                     rect: Rect {
                         min: (self.pos + Pos2::new(
@@ -133,42 +233,101 @@ impl Canvas {
                 });
             }
         }
+        // render palette
+        let palette_pos = self.palette_pos();
+        let mut draw_order: Vec<usize> = (0..self.palette.size()).filter(|x| *x != self.curr_idx).collect();
+        draw_order.push(self.curr_idx);
+        for i in draw_order {
+            ui.painter().add(RectShape {
+                rect: Rect {
+                    min: (palette_pos + Pos2::new(
+                        0.0,
+                        i as f32 * self.pixel_width as f32,
+                    ).to_vec2()).to_pos2(),
+                    max: (palette_pos + Pos2::new(
+                        self.pixel_width as f32,
+                        (i + 1) as f32 * self.pixel_width as f32,
+                    ).to_vec2()).to_pos2(),
+                },
+                rounding: if i == self.curr_idx {
+                    Rounding::from(3.0)
+                } else {
+                    Rounding::ZERO
+                },
+                fill: self.palette.get_color(i),
+                stroke: if i == self.curr_idx {
+                    Stroke::new(2.0, Color32::GOLD)
+                } else {
+                    Stroke::new(1.0, Color32::BLACK)
+                },
+                blur_width: 0.0,
+                fill_texture_id: Default::default(),
+                uv: Rect::ZERO,
+            });
+        }
     }
 
     pub fn update(&mut self, ui: &mut Ui) {
+        self.pos = ui.next_widget_position();
+        // get area we're gonna draw in
+        let draw_bounds = Rect {
+            min: self.pos,
+            max: (self.pos + Pos2 {
+                x: self.pixel_width as f32 * (self.grid.width() as f32 + 3.0),
+                y: self.pixel_width as f32 * self.grid.height() as f32,
+            }.to_vec2()).into(),
+        };
+        ui.advance_cursor_after_rect(draw_bounds);
+        ui.set_clip_rect(draw_bounds);
+
         // register click
         if ui.input(|i| i.pointer.button_clicked(PointerButton::Primary)) {
             let mut mouse_pos = Pos2::ZERO;
             ui.input(|i| mouse_pos = i.pointer.interact_pos().unwrap());
-            let idx = (mouse_pos - self.pos) / self.pixel_width as f32;
-            if idx.x < self.grid.size() as f32 && idx.y < self.grid.size() as f32 {
-                self.grid.set_pixel(idx.x as usize, idx.y as usize, self.curr_idx);
+
+            // select palette
+            let idx = (mouse_pos - self.palette_pos()) / self.pixel_width as f32;
+            let x_bounds = idx.x <= 1.0 && idx.x >= 0.0;
+            let y_bounds = idx.y < self.palette.size() as f32 && idx.y >= 0.0;
+            if x_bounds && y_bounds {
+                self.curr_idx = idx.y as usize;
             }
         }
+
+        // register button held down
+        if ui.input(|i| i.pointer.button_down(PointerButton::Primary)) {
+            let mut mouse_pos = Pos2::ZERO;
+            ui.input(|i| mouse_pos = i.pointer.interact_pos().unwrap());
+
+            // paint on canvas
+            let idx = (mouse_pos - self.pos) / self.pixel_width as f32;
+            let x_bounds = idx.x < self.grid.width() as f32 && idx.x >= 0.0;
+            let y_bounds = idx.y < self.grid.height() as f32 && idx.y >= 0.0;
+            if x_bounds && y_bounds {
+                self.grid.set(idx.x as usize, idx.y as usize, self.curr_idx);
+            }
+        }
+
         // switch palette
         if ui.input(|i| i.key_pressed(Key::ArrowRight)) {
             self.curr_idx += 1;
-            if self.curr_idx >= self.palette.get_count() {
+            if self.curr_idx >= self.palette.size() {
                 self.curr_idx = 0;
             }
         }
+        if ui.input(|i| i.key_pressed(Key::ArrowLeft)) {
+            if self.curr_idx == 0 {
+                self.curr_idx = self.palette.size();
+            }
+            self.curr_idx -= 1;
+        }
+
+        // reset draw bounds
+        ui.set_clip_rect(Rect::EVERYTHING);
     }
 
     pub fn get_pixel_color(&self, row: usize, col: usize) -> Color32 {
-        match &self.grid {
-            CanvasGrid::Grid8x8(grid) => {
-                self.palette.get_color(grid[row][col])
-            },
-            CanvasGrid::Grid16x16(grid) => {
-                self.palette.get_color(grid[row][col])
-            },
-            CanvasGrid::Grid32x32(grid) => {
-                self.palette.get_color(grid[row][col])
-            },
-            CanvasGrid::Grid64x64(grid) => {
-                self.palette.get_color(grid[row][col])
-            },
-        }
+        self.palette.get_color(self.grid.get(row, col))
     }
 }
 
