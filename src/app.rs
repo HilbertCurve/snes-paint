@@ -6,9 +6,10 @@
 //! alt+f: switch sidebar to file mode
 //! tab: cycle palette forwards
 //! shift+tab: cycle palette backwards
+//! TODO: MORE!
 
 use eframe::{App, Frame};
-use eframe::egui::{CentralPanel, Color32, Context, Id, Pos2, Sense, SidePanel, TextEdit};
+use eframe::egui::{CentralPanel, Color32, ComboBox, Context, Id, Pos2, Sense, SidePanel, TextEdit};
 use crate::paint::Canvas;
 
 pub mod shortcut {
@@ -42,6 +43,7 @@ pub enum SideBarType {
     #[default]
     File,
     Canvas,
+    Layer,
     // ...
 }
 
@@ -97,7 +99,7 @@ impl App for SnesPaintApp {
             // depending on selected menu bar, select certain functionality
             match self.side_bar.side_bar_type {
                 SideBarType::Canvas => {
-                    // field for changing texture format
+                    // field for changing grid size
                     ui.horizontal(|ui| {
                         ui.label("Size:");
                         let mut width = &mut self.side_bar.canvas_width_field;
@@ -120,12 +122,40 @@ impl App for SnesPaintApp {
                             };
                         }
                     });
-                    // value for changing canvas size
+                    // field for changing palette type
+                    ui.horizontal(|ui| {
+                        let mut current_bpp = self.canvas.palette.bpp();
+                        ComboBox::from_label("Palette Size:")
+                            .selected_text(self.canvas.palette.to_string())
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut current_bpp, 2, "2 BPP (4 colors)");
+                                ui.selectable_value(&mut current_bpp, 3, "3 BPP (8 colors)");
+                                ui.selectable_value(&mut current_bpp, 4, "4 BPP (16 colors)");
+                                ui.selectable_value(&mut current_bpp, 8, "8 BPP (256 colors)");
+                            }
+                        );
+
+                        if current_bpp != self.canvas.palette.bpp() {
+                            self.canvas.palette.set_bpp(current_bpp);
+                        }
+                    });
                 },
                 SideBarType::File => {
                     // Save file
+                    if ui.button("Test BPPS Stuff!").clicked() {
+                        let serialized = self.canvas.serialize();
+                        println!("Canvas VRAM data:");
+                        for c in serialized.0.chunks(2) {
+                            println!("{:b} {:b}", c[0], c[1]);
+                        }
+                        println!("Palette data:");
+                        for c in serialized.1.chunks(2) {
+                            println!("{:X} {:X}", c[0], c[1]);
+                        }
+                    }
                     // Load file
                 }
+                _ => {}
             }
         });
         CentralPanel::default().show(ctx, |ui| {

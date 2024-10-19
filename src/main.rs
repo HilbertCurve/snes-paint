@@ -3,6 +3,7 @@ use crate::app::SnesPaintApp;
 
 mod app;
 mod paint;
+mod serde;
 
 #[derive(Debug)]
 pub enum Error {

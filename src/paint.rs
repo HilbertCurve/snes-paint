@@ -1,15 +1,22 @@
+//! Implementations for storing the canvas, palette, and functionalities therein.
+//!
+//! TODO: set indices to u8 instead of usize?
+
+use std::fmt::Display;
 use std::ops::Index;
 use eframe::egui::{Color32, PointerButton, Rect, Rgba, Rounding, Stroke, Ui, Vec2};
 use eframe::emath::Pos2;
 use eframe::epaint::RectShape;
 use crate::app::action;
-use crate::Error;
+use crate::{serde, Error};
 
+// TODO: One-Channel for the SNES is not allowed
 pub(crate) enum Palette {
     OneChannel([Color32;2]),
     TwoChannel([Color32;4]),
     ThreeChannel([Color32;8]),
     FourChannel([Color32;16]),
+    EightChannel([Color32;256]),
 }
 
 impl Default for Palette {
@@ -18,9 +25,41 @@ impl Default for Palette {
     }
 }
 
+impl Display for Palette {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match &self {
+            Palette::OneChannel(_) => { "1 BPP (2 colors)".to_owned() }
+            Palette::TwoChannel(_) => { "2 BPP (4 colors)".to_owned() }
+            Palette::ThreeChannel(_) => { "3 BPP (8 colors)".to_owned() }
+            Palette::FourChannel(_) => { "4 BPP (16 colors)".to_owned() }
+            Palette::EightChannel(_) => { "8 BPP (256 colors)".to_owned() }
+        };
+        write!(f, "{}", str)
+    }
+}
+
+impl Index<usize> for Palette {
+    type Output = Color32;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match &self {
+            Palette::OneChannel(c) => &c[index],
+            Palette::TwoChannel(c) => &c[index],
+            Palette::ThreeChannel(c) => &c[index],
+            Palette::FourChannel(c) => &c[index],
+            Palette::EightChannel(c) => &c[index],
+        }
+    }
+}
+
 impl Palette {
     pub fn new() -> Palette {
-        Palette::OneChannel([Color32::WHITE, Color32::BLACK])
+        Palette::TwoChannel([
+            Color32::WHITE,
+            Color32::BLACK,
+            Color32::from_rgb(0x71, 0x01, 0x93),
+            Color32::from_rgb(0x01, 0x47, 0xab),
+        ])
     }
 
     pub fn get_color(&self, idx: usize) -> Color32 {
@@ -29,6 +68,7 @@ impl Palette {
             Palette::TwoChannel(c) => c[idx],
             Palette::ThreeChannel(c) => c[idx],
             Palette::FourChannel(c) => c[idx],
+            _ => { unimplemented!() }
         }
     }
 
@@ -38,6 +78,7 @@ impl Palette {
             &mut Palette::TwoChannel(ref mut c) => &mut c[idx],
             &mut Palette::ThreeChannel(ref mut c) => &mut c[idx],
             &mut Palette::FourChannel(ref mut c) => &mut c[idx],
+            _ => { unimplemented!() }
         }
     }
 
@@ -47,6 +88,7 @@ impl Palette {
             &mut Palette::TwoChannel(ref mut c) => c[idx] = color,
             &mut Palette::ThreeChannel(ref mut c) => c[idx] = color,
             &mut Palette::FourChannel(ref mut c) => c[idx] = color,
+            _ => { unimplemented!() }
         }
     }
 
@@ -56,7 +98,43 @@ impl Palette {
             Palette::TwoChannel(_) => 4,
             Palette::ThreeChannel(_) => 8,
             Palette::FourChannel(_) => 16,
+            _ => { unimplemented!() }
         }
+    }
+
+    pub fn bpp(&self) -> usize {
+        match &self {
+            Palette::OneChannel(_) => 1,
+            Palette::TwoChannel(_) => 2,
+            Palette::ThreeChannel(_) => 3,
+            Palette::FourChannel(_) => 4,
+            Palette::EightChannel(_) => 8,
+        }
+    }
+
+    pub(crate) fn set_bpp(&mut self, bpp: usize) {
+        let num_copy = 1 << Ord::min(bpp, self.bpp());
+        let curr_colors = match &self {
+            Palette::OneChannel(c) => &c[..],
+            Palette::TwoChannel(c) => &c[..],
+            Palette::ThreeChannel(c) => &c[..],
+            Palette::FourChannel(c) => &c[..],
+            Palette::EightChannel(c) => &c[..],
+        };
+        let mut new_palette = match bpp {
+            1 => Palette::OneChannel(Default::default()),
+            2 => Palette::TwoChannel(Default::default()),
+            3 => Palette::ThreeChannel(Default::default()),
+            4 => Palette::FourChannel(Default::default()),
+            8 => Palette::EightChannel([Color32::BLACK;256]),
+            _ => { panic!("Invalid bpp setting: {bpp}!!!"); }
+        };
+
+        for c in curr_colors[0..num_copy].iter().enumerate() {
+            new_palette.set_color(c.0, *c.1);
+        }
+
+        *self = new_palette;
     }
 }
 
@@ -80,18 +158,21 @@ impl<const W: usize, const H: usize> CanvasGrid<W, H> {
 }
 
 /// A trait for being a two-dimensional grid of elements.
-trait Grid<T: Clone> {
+pub(crate) trait Grid<T: Clone> {
     fn get(&self, row: usize, col: usize) -> T;
     fn set(&mut self, row: usize, col: usize, v: T);
     fn width(&self) -> usize;
     fn height(&self) -> usize;
+    fn idx_linear(&self, idx: usize) -> T {
+        self.get(idx / self.width(), idx % self.width())
+    }
 }
 
 macro_rules! impl_grid_on_canvas {
     ($w:expr, $h:expr) => {
         impl Grid<usize> for CanvasGrid<$w, $h> {
             fn get(&self, row: usize, col: usize) -> usize {
-                self.grid[row][col]
+                self.grid[col][row]
             }
             fn set(&mut self, row: usize, col: usize, v: usize) {
                 self.grid[row][col] = v;
@@ -161,7 +242,7 @@ impl Canvas {
 
                 for i in 0..copy_width {
                     for j in 0..copy_height {
-                        grid[i][j] = self.grid.get(i, j);
+                        grid[j][i] = self.grid.get(i, j);
                     }
                 }
 
@@ -174,7 +255,7 @@ impl Canvas {
 
                 for i in 0..copy_width {
                     for j in 0..copy_height {
-                        grid[i][j] = self.grid.get(i, j);
+                        grid[j][i] = self.grid.get(i, j);
                     }
                 }
 
@@ -225,7 +306,7 @@ impl Canvas {
                         ).to_vec2()).into(),
                     },
                     rounding: Default::default(),
-                    fill: self.get_pixel_color(i, j),
+                    fill: self.get_pixel_color(j, i),
                     stroke: Stroke::new(1.0, Color32::BLACK),
                     blur_width: 0.0,
                     fill_texture_id: Default::default(),
@@ -364,7 +445,7 @@ impl Canvas {
             }
         }
         // paint with cursor
-        if ui.input_mut(|mut i| i.consume_shortcut(&action::CURSOR_PAINT)) {
+        if ui.input_mut(|mut i| i.key_down(action::CURSOR_PAINT.logical_key)) {
             self.grid.set(self.cursor.0, self.cursor.1, self.color_idx);
         }
 
@@ -374,6 +455,11 @@ impl Canvas {
 
     pub fn get_pixel_color(&self, row: usize, col: usize) -> Color32 {
         self.palette.get_color(self.grid.get(row, col))
+    }
+
+    // NOTE: function signature will change soon to implement file IO
+    pub fn serialize(&self) -> (Vec<u8>, Vec<u8>) {
+        serde::write_out(self.grid.as_ref(), &self.palette)
     }
 }
 
