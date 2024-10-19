@@ -1,8 +1,8 @@
-use std::num::ParseIntError;
 use std::ops::Index;
-use eframe::egui::{Color32, Key, PointerButton, Rect, Response, Rounding, Stroke, Ui, Vec2, Widget};
+use eframe::egui::{Color32, PointerButton, Rect, Rgba, Rounding, Stroke, Ui, Vec2};
 use eframe::emath::Pos2;
 use eframe::epaint::RectShape;
+use crate::app::action;
 use crate::Error;
 
 pub(crate) enum Palette {
@@ -127,13 +127,13 @@ impl<const W: usize, const H: usize> Default for CanvasGrid<W, H> {
     }
 }
 
-
 pub(crate) struct Canvas {
     pub(crate) palette: Palette,
     grid: Box<dyn Grid<usize>>,
     pos: Pos2,
+    cursor: (usize, usize),
     pixel_width: u32,
-    pub(crate) curr_idx: usize,
+    pub(crate) color_idx: usize,
 }
 
 impl Canvas {
@@ -142,8 +142,9 @@ impl Canvas {
             palette: Palette::default(),
             grid: Box::new(CanvasGrid::<8, 8>::default()),
             pos: Pos2::new(0.0, 0.0),
+            cursor: Default::default(),
             pixel_width: 20,
-            curr_idx: 0,
+            color_idx: 0,
         }
     }
 
@@ -163,7 +164,6 @@ impl Canvas {
                         grid[i][j] = self.grid.get(i, j);
                     }
                 }
-
 
                 self.grid = Box::new(CanvasGrid::<8, 8> { grid });
 
@@ -233,10 +233,26 @@ impl Canvas {
                 });
             }
         }
+        // render cursor
+        let (x, y) = self.cursor;
+        let foo = self.pos + (Pos2::new(x as f32, y as f32) * self.pixel_width as f32).to_vec2();
+
+        ui.painter().add(RectShape {
+            rect: Rect {
+                min: foo,
+                max: foo + (Pos2::new(1.0, 1.0) * self.pixel_width as f32).to_vec2(),
+            },
+            rounding: Default::default(),
+            fill: Color32::from(Rgba::from_black_alpha(0.0)),
+            stroke: Stroke::new(2.0, Color32::GOLD),
+            blur_width: 0.0,
+            fill_texture_id: Default::default(),
+            uv: Rect::ZERO,
+        });
         // render palette
         let palette_pos = self.palette_pos();
-        let mut draw_order: Vec<usize> = (0..self.palette.size()).filter(|x| *x != self.curr_idx).collect();
-        draw_order.push(self.curr_idx);
+        let mut draw_order: Vec<usize> = (0..self.palette.size()).filter(|x| *x != self.color_idx).collect();
+        draw_order.push(self.color_idx);
         for i in draw_order {
             ui.painter().add(RectShape {
                 rect: Rect {
@@ -249,13 +265,13 @@ impl Canvas {
                         (i + 1) as f32 * self.pixel_width as f32,
                     ).to_vec2()).to_pos2(),
                 },
-                rounding: if i == self.curr_idx {
+                rounding: if i == self.color_idx {
                     Rounding::from(3.0)
                 } else {
                     Rounding::ZERO
                 },
                 fill: self.palette.get_color(i),
-                stroke: if i == self.curr_idx {
+                stroke: if i == self.color_idx {
                     Stroke::new(2.0, Color32::GOLD)
                 } else {
                     Stroke::new(1.0, Color32::BLACK)
@@ -290,7 +306,7 @@ impl Canvas {
             let x_bounds = idx.x <= 1.0 && idx.x >= 0.0;
             let y_bounds = idx.y < self.palette.size() as f32 && idx.y >= 0.0;
             if x_bounds && y_bounds {
-                self.curr_idx = idx.y as usize;
+                self.color_idx = idx.y as usize;
             }
         }
 
@@ -304,22 +320,52 @@ impl Canvas {
             let x_bounds = idx.x < self.grid.width() as f32 && idx.x >= 0.0;
             let y_bounds = idx.y < self.grid.height() as f32 && idx.y >= 0.0;
             if x_bounds && y_bounds {
-                self.grid.set(idx.x as usize, idx.y as usize, self.curr_idx);
+                self.grid.set(idx.x as usize, idx.y as usize, self.color_idx);
             }
         }
 
         // switch palette
-        if ui.input(|i| i.key_pressed(Key::ArrowRight)) {
-            self.curr_idx += 1;
-            if self.curr_idx >= self.palette.size() {
-                self.curr_idx = 0;
+        if ui.input_mut(|i| i.consume_shortcut(&crate::app::shortcut::PALETTE_FORWARD)) {
+            self.color_idx += 1;
+            if self.color_idx == self.palette.size() {
+                self.color_idx = 0;
             }
         }
-        if ui.input(|i| i.key_pressed(Key::ArrowLeft)) {
-            if self.curr_idx == 0 {
-                self.curr_idx = self.palette.size();
+        if ui.input_mut(|i| i.consume_shortcut(&crate::app::shortcut::PALETTE_BACKWARD)) {
+            if self.color_idx == 0 {
+                self.color_idx = self.palette.size();
             }
-            self.curr_idx -= 1;
+            self.color_idx -= 1;
+        }
+
+        // move cursor
+        if ui.input_mut(|mut i| i.consume_shortcut(&action::CURSOR_LEFT)) {
+            self.cursor.0 += 1;
+            if self.cursor.0 >= self.grid.width() {
+                self.cursor.0 = 0;
+            }
+        }
+        if ui.input_mut(|mut i| i.consume_shortcut(&action::CURSOR_RIGHT)) {
+            if self.cursor.0 == 0 {
+                self.cursor.0 = self.grid.width();
+            }
+            self.cursor.0 -= 1;
+        }
+        if ui.input_mut(|mut i| i.consume_shortcut(&action::CURSOR_UP)) {
+            if self.cursor.1 == 0 {
+                self.cursor.1 = self.grid.width();
+            }
+            self.cursor.1 -= 1;
+        }
+        if ui.input_mut(|mut i| i.consume_shortcut(&action::CURSOR_DOWN)) {
+            self.cursor.1 += 1;
+            if self.cursor.1 >= self.grid.width() {
+                self.cursor.1 = 0;
+            }
+        }
+        // paint with cursor
+        if ui.input_mut(|mut i| i.consume_shortcut(&action::CURSOR_PAINT)) {
+            self.grid.set(self.cursor.0, self.cursor.1, self.color_idx);
         }
 
         // reset draw bounds

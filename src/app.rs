@@ -1,10 +1,38 @@
+//! Application rendering and state management
+//!
+//! Keybindings:
+//!
+//! alt+c: switch sidebar to canvas mode
+//! alt+f: switch sidebar to file mode
+//! tab: cycle palette forwards
+//! shift+tab: cycle palette backwards
+
 use eframe::{App, Frame};
-use eframe::egui::{CentralPanel, Color32, Context, Id, Pos2, SidePanel, TextEdit};
-use crate::Error;
+use eframe::egui::{CentralPanel, Color32, Context, Id, Pos2, Sense, SidePanel, TextEdit};
 use crate::paint::Canvas;
 
+pub mod shortcut {
+    use eframe::egui::{Key, KeyboardShortcut, Modifiers};
+
+    pub(crate) const PALETTE_FORWARD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::J);
+    pub(crate) const PALETTE_BACKWARD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::SHIFT, Key::K);
+    pub(crate) const SIDEBAR_FILE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::ALT, Key::F);
+    pub(crate) const SIDEBAR_CANVAS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::ALT, Key::C);
+    pub(crate) const CANVAS_SIZE_FIELD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::I);
+}
+
+pub mod action {
+    use eframe::egui::{Key, KeyboardShortcut, Modifiers};
+
+    pub(crate) const CURSOR_LEFT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::L);
+    pub(crate) const CURSOR_RIGHT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::H);
+    pub(crate) const CURSOR_UP: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::K);
+    pub(crate) const CURSOR_DOWN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::J);
+    pub(crate) const CURSOR_PAINT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::F);
+}
+
 #[derive(Default)]
-pub struct SNESPaintApp {
+pub struct SnesPaintApp {
     canvas: Canvas,
     side_bar: SideBar,
 }
@@ -24,8 +52,8 @@ pub struct SideBar {
     canvas_height_field: String,
 }
 
-impl SNESPaintApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> SNESPaintApp {
+impl SnesPaintApp {
+    pub fn new(_cc: &eframe::CreationContext<'_>) -> SnesPaintApp {
         let mut app = Self::default();
         app.canvas.palette.set_color(1, Color32::BLACK);
         app.canvas.set_pos(Pos2::new(50.0, 50.0));
@@ -33,19 +61,43 @@ impl SNESPaintApp {
     }
 }
 
-impl App for SNESPaintApp {
+impl App for SnesPaintApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         SidePanel::right(Id::new("SidePanel")).min_width(200.0).max_width(300.0).show(ctx, |ui| {
             ui.separator();
+            // display menu bar for selecting functions
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut self.side_bar.side_bar_type, SideBarType::File, "File");
-                ui.selectable_value(&mut self.side_bar.side_bar_type, SideBarType::Canvas, "Canvas");
+                let file_hover = ui.selectable_value(
+                    &mut self.side_bar.side_bar_type,
+                    SideBarType::File,
+                    "File"
+                ).interact(Sense::hover());
+                if let Some(_) = file_hover.hover_pos() {
+                    file_hover.show_tooltip_text("alt+f");
+                }
+
+                let canvas_hover = ui.selectable_value(
+                    &mut self.side_bar.side_bar_type,
+                    SideBarType::Canvas,
+                    "Canvas"
+                ).interact(Sense::hover());
+                if let Some(_) = canvas_hover.hover_pos() {
+                    canvas_hover.show_tooltip_text("alt+c");
+                }
             });
             ui.separator();
 
+            if ui.input_mut(|mut i| i.consume_shortcut(&shortcut::SIDEBAR_FILE)) {
+                self.side_bar.side_bar_type = SideBarType::File;
+            }
+            if ui.input_mut(|mut i| i.consume_shortcut(&shortcut::SIDEBAR_CANVAS)) {
+                self.side_bar.side_bar_type = SideBarType::Canvas;
+            }
+
+            // depending on selected menu bar, select certain functionality
             match self.side_bar.side_bar_type {
                 SideBarType::Canvas => {
-                    // value for changing texture format
+                    // field for changing texture format
                     ui.horizontal(|ui| {
                         ui.label("Size:");
                         let mut width = &mut self.side_bar.canvas_width_field;
@@ -82,7 +134,7 @@ impl App for SNESPaintApp {
             ui.horizontal(|ui| {
                 self.canvas.update(ui);
                 self.canvas.render(ui);
-                let idx = self.canvas.curr_idx;
+                let idx = self.canvas.color_idx;
                 ui.color_edit_button_srgba(self.canvas.get_palette_mut().get_color_mut(idx));
             });
             ui.separator();

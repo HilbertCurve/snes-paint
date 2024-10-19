@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-use crate::app::SNESPaintApp;
+use crate::app::SnesPaintApp;
 
 mod app;
 mod paint;
@@ -19,6 +19,6 @@ impl std::error::Error for Error { }
 
 fn main() -> Result<(), Error> {
     let native_options = eframe::NativeOptions::default();
-    eframe::run_native("SNES Paint", native_options, Box::new(|cc| Ok(Box::new(SNESPaintApp::new(cc))))).unwrap();
+    eframe::run_native("SNES Paint", native_options, Box::new(|cc| Ok(Box::new(SnesPaintApp::new(cc))))).unwrap();
     Ok(())
 }
