@@ -8,6 +8,7 @@
 //! shift+tab: cycle palette backwards
 //! TODO: MORE!
 
+use std::fs;
 use eframe::{App, Frame};
 use eframe::egui::{CentralPanel, Color32, ComboBox, Context, Id, Pos2, Sense, SidePanel, TextEdit};
 use crate::paint::Canvas;
@@ -151,6 +152,20 @@ impl App for SnesPaintApp {
                         println!("Palette data:");
                         for c in serialized.1.chunks(2) {
                             println!("{:X} {:X}", c[0], c[1]);
+                        }
+                    }
+                    if ui.button("Save...").clicked() {
+                        let serialized = self.canvas.serialize();
+                        let file = rfd::FileDialog::new().save_file();
+                        if let Some(file) = file {
+                            fs::write(file, serialized.0).unwrap();
+                        }
+                    }
+                    if ui.button("Save Palette...").clicked() {
+                        let serialized = self.canvas.serialize();
+                        let file = rfd::FileDialog::new().save_file();
+                        if let Some(file) = file {
+                            fs::write(file, serialized.1).unwrap();
                         }
                     }
                     // Load file

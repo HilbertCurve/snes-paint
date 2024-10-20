@@ -143,6 +143,10 @@ pub(crate) struct CanvasGrid<const W: usize, const H: usize> {
 }
 
 impl<const W: usize, const H: usize> CanvasGrid<W, H> {
+    pub fn new() -> Self {
+        CanvasGrid { grid: [[0usize;W];H] }
+    }
+    
     pub fn set_pixel(&mut self, row: usize, col: usize, idx: usize) {
         if row > W || col > H {
             panic!("Pixel set out of bounds! ({row}, {col}) out of bounds for {W}x{H} grid.");
@@ -164,7 +168,43 @@ pub(crate) trait Grid<T: Clone> {
     fn width(&self) -> usize;
     fn height(&self) -> usize;
     fn idx_linear(&self, idx: usize) -> T {
-        self.get(idx / self.width(), idx % self.width())
+        self.get(idx % self.width(), idx / self.width())
+    }
+}
+
+// pulled out to global fn because traits with generic fns can't be turned into objects
+pub fn subgrid<const W: usize, const H: usize>(grid: &dyn Grid<usize>, row_range: (usize, usize), col_range: (usize, usize)) -> Box<dyn Grid<usize>> {
+    let mut ret = CanvasGrid::<W, H>::new();
+
+    // enumerating lets us index separately into ret and grid, so we don't get immediate OOB bug
+    for (ret_j, j) in (row_range.0..row_range.1).into_iter().enumerate() {
+        for (ret_i, i) in (col_range.0..col_range.1).into_iter().enumerate() {
+            ret.set(ret_i, ret_j, grid.get(i, j));
+        }
+    }
+
+    Box::new(ret)
+}
+
+impl<const W: usize, const H: usize> Grid<usize> for CanvasGrid<W, H> {
+    #[inline]
+    fn get(&self, row: usize, col: usize) -> usize {
+        self.grid[col][row]
+    }
+
+    #[inline]
+    fn set(&mut self, row: usize, col: usize, v: usize) {
+        self.grid[col][row] = v;
+    }
+
+    #[inline]
+    fn width(&self) -> usize {
+        W
+    }
+
+    #[inline]
+    fn height(&self) -> usize {
+        H
     }
 }
 
@@ -175,7 +215,7 @@ macro_rules! impl_grid_on_canvas {
                 self.grid[col][row]
             }
             fn set(&mut self, row: usize, col: usize, v: usize) {
-                self.grid[row][col] = v;
+                self.grid[col][row] = v;
             }
             fn width(&self) -> usize {
                 $w
@@ -186,11 +226,6 @@ macro_rules! impl_grid_on_canvas {
         }
     };
 }
-
-impl_grid_on_canvas!(8, 8);
-impl_grid_on_canvas!(16, 16);
-impl_grid_on_canvas!(32, 32);
-impl_grid_on_canvas!(64, 64);
 
 impl<const W: usize, const H: usize> Index<usize> for CanvasGrid<W, H> {
     type Output = [usize];
@@ -306,7 +341,7 @@ impl Canvas {
                         ).to_vec2()).into(),
                     },
                     rounding: Default::default(),
-                    fill: self.get_pixel_color(j, i),
+                    fill: self.get_pixel_color(i, j),
                     stroke: Stroke::new(1.0, Color32::BLACK),
                     blur_width: 0.0,
                     fill_texture_id: Default::default(),
